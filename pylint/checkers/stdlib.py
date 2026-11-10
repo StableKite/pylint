@@ -1111,7 +1111,49 @@ class StdlibChecker(DeprecatedMixin, BaseChecker):
         return self._deprecated_arguments.get(method, ())
 
     def deprecated_classes(self, module: str) -> Iterable[str]:
+        # Abstract AST bases remain valid for annotations, isinstance and
+        # subclassing. Python 3.15 only deprecates constructing these classes.
+        if module == "ast":
+            return ()
         return self._deprecated_classes.get(module, ())
+
+    @staticmethod
+    def _called_ast_class(func: nodes.NodeNG) -> str | None:
+        for inferred in utils.infer_all(func):
+            if (
+                isinstance(inferred, nodes.ClassDef)
+                and inferred.root().name in {"ast", "_ast"}
+            ):
+                return inferred.name
+        if isinstance(func, nodes.Attribute):
+            module = utils.safe_infer(func.expr)
+            if isinstance(module, nodes.Module) and module.name in {"ast", "_ast"}:
+                return func.attrname
+        elif isinstance(func, nodes.Name):
+            # On Python 3.15 astroid can infer the imported module while its
+            # C-defined abstract classes are Uninferable. Resolve the lexical
+            # import binding as well, respecting local aliases and shadowing.
+            for binding in func.lookup(func.name)[1]:
+                if (
+                    isinstance(binding, nodes.ImportFrom)
+                    and not binding.level
+                    and binding.modname in {"ast", "_ast"}
+                ):
+                    for name, alias in binding.names:
+                        if (alias or name) == func.name:
+                            return name
+        return None
+
+    def check_deprecated_class_in_call(self, node: nodes.Call) -> None:
+        super().check_deprecated_class_in_call(node)
+        ast_classes = self._deprecated_classes.get("ast", ())
+        if not ast_classes:
+            return
+        class_name = self._called_ast_class(node.func)
+        if class_name in ast_classes:
+            self.add_message(
+                "deprecated-class", node=node, args=(class_name, "ast")
+            )
 
     def deprecated_decorators(self) -> Iterable[str]:
         return self._deprecated_decorators
