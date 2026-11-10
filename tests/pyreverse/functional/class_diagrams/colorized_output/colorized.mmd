@@ -28,6 +28,7 @@ classDiagram
   class StdlibChecker {
     msgs : dict[str, MessageDefinitionTuple]
     name : str
+    check_deprecated_class_in_call(node: nodes.Call) None
     deprecated_arguments(method: str) tuple[tuple[int | None, str], ...]
     deprecated_attributes() Iterable[str]
     deprecated_classes(module: str) Iterable[str]
