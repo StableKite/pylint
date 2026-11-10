@@ -1112,7 +1112,7 @@ class StdlibChecker(DeprecatedMixin, BaseChecker):
 
     def deprecated_classes(self, module: str) -> Iterable[str]:
         # Abstract AST bases remain valid for annotations, isinstance and
-        # subclassing. Python 3.15 only deprecates constructing these classes.
+        # inheritance. Python 3.15 only deprecates constructing these classes.
         if module == "ast":
             return ()
         return self._deprecated_classes.get(module, ())
