@@ -4,12 +4,14 @@ on:
   push:
     branches:
       - main
+      - stablekite/ast-constructor-deprecation-v1
       - "maintenance/**"
     paths-ignore:
       - doc/data/messages/**
   pull_request:
     branches:
       - main
+      - stablekite/ast-constructor-deprecation-v1
       - "maintenance/**"
   workflow_dispatch:
   workflow_call:

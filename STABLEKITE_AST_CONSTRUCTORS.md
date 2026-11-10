@@ -25,3 +25,11 @@ failures are `invalid_all_format_valid_5`, `invalid_all_format_valid_6`,
 `regression_4680`, `regression_9497`, `undefined_variable_typing`, and
 `unused_import_assigned_to`. They remain open. This is not a claim that the
 complete upstream Pylint suite passes on Python 3.15.
+
+On native Linux CPython 3.15.2t, the same original selection has 1389 passes
+and sixteen inherited failures before this patch, and 1403 passes with the
+same sixteen failures afterwards. All 1465 shared case outcomes match and
+the fourteen new regressions pass. Fresh ordinary wheel consumers on both
+Windows and Linux validate the full project configuration: the real parsed
+expression and annotation have no W4904; four real constructor forms keep
+their W4904 at call lines 5, 6, 7, and 8.

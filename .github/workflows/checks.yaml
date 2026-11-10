@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - main
+      - stablekite/ast-constructor-deprecation-v1
       - "maintenance/**"
   pull_request:
     branches:
       - main
+      - stablekite/ast-constructor-deprecation-v1
       - "maintenance/**"
   workflow_dispatch:
 
