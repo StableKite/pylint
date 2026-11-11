@@ -580,6 +580,55 @@ def _is_attribute_property(name: str, klass: nodes.ClassDef) -> bool:
     return False
 
 
+def _slot_attribute_name(name: str, owner: nodes.ClassDef | None) -> str:
+    """Apply the declaring class's private-name mangling to a slot or attribute."""
+    if owner is not None and name.startswith("__") and not name.endswith("__"):
+        class_name = owner.name.lstrip("_")
+        if class_name:
+            return f"_{class_name}{name}"
+    return name
+
+
+def _declared_slot_names(node: nodes.ClassDef) -> set[str]:
+    """Find known descriptors even when another base supplies an instance dict."""
+    declared: set[str] = set()
+    for owner in safe_mro(node):
+        if "__slots__" not in owner.locals:
+            continue
+        common_names: set[str] | None = None
+        try:
+            alternatives = tuple(owner.ilookup("__slots__"))
+        except astroid.InferenceError:
+            continue
+        for slots in alternatives:
+            if isinstance(slots, nodes.Const) and isinstance(slots.value, str):
+                values = [slots]
+            elif isinstance(slots, nodes.Dict):
+                values = [key for key, _ in slots.items if key is not None]
+            elif isinstance(slots, (nodes.List, nodes.Tuple, nodes.Set)):
+                values = slots.elts
+            else:
+                # An unknown alternative cannot prove a descriptor exists.
+                common_names = set()
+                break
+            names: set[str] = set()
+            for value in values:
+                inferred = safe_infer(value)
+                if (
+                    isinstance(inferred, nodes.Const)
+                    and isinstance(inferred.value, str)
+                    and inferred.value.isidentifier()
+                ):
+                    names.add(_slot_attribute_name(inferred.value, owner))
+            if common_names is None:
+                common_names = names
+            else:
+                common_names.intersection_update(names)
+        if common_names:
+            declared.update(common_names)
+    return declared
+
+
 def _has_same_layout_slots(
     slots: list[nodes.Const | None], assigned_value: nodes.NodeNG
 ) -> bool:
@@ -1356,6 +1405,7 @@ a metaclass class method.",
             instance_attrs = merged
         else:
             instance_attrs = cnode.instance_attrs
+        declared_slots: set[str] | None = None
         for attr, nodes_lst in instance_attrs.items():
             # Exclude `__dict__` as it is already defined.
             if attr == "__dict__":
@@ -1381,6 +1431,24 @@ a metaclass class method.",
                 or _is_classic_property_setter(frame)
                 for frame in frames
             ):
+                continue
+
+            if declared_slots is None:
+                declared_slots = _declared_slot_names(cnode)
+            filtered_nodes = [
+                node
+                for node in filtered_nodes
+                if _slot_attribute_name(
+                    attr,
+                    (
+                        node_frame_class(node)
+                        if isinstance(node, nodes.AssignAttr)
+                        else None
+                    ),
+                )
+                not in declared_slots
+            ]
+            if not filtered_nodes:
                 continue
 
             # check attribute is defined as a class attribute
