@@ -1515,6 +1515,22 @@ def is_none(node: nodes.NodeNG) -> bool:
     return False
 
 
+def get_inferred_type_name(inferred: SuccessfulInferenceResult) -> str:
+    """Return a safe diagnostic name for an inferred object."""
+    if isinstance(
+        inferred,
+        (
+            nodes.ClassDef,
+            nodes.FunctionDef,
+            nodes.Lambda,
+            nodes.Module,
+            bases.BaseInstance,
+        ),
+    ):
+        return inferred.name
+    return inferred.pytype().rsplit(".", 1)[-1]
+
+
 def node_type(node: nodes.NodeNG) -> SuccessfulInferenceResult | None:
     """Return the inferred type for `node`.
 

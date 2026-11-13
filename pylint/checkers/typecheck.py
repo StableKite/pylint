@@ -130,7 +130,7 @@ def _statement_raises(
             and _statement_raises(statement.body[-1], seen)
             and _statement_raises(statement.orelse[-1], seen)
         )
-    # try/with may catch or suppress an otherwise nonreturning call.
+    # try/with may catch or suppress an exception raised by the call.
     return False
 
 
@@ -2178,24 +2178,7 @@ accessed. Python regular expressions are accepted.",
                                 if inferred.name[-5:].lower() == "mixin":
                                     continue
 
-                        # Only read ``name`` from nodes known to define it; any
-                        # other inferred result (e.g. a ``Slice`` from
-                        # ``slice(...)``) has no ``name``, so fall back to the
-                        # inferred type's name to keep the message informative
-                        # without risking an ``AttributeError``.
-                        if isinstance(
-                            inferred,
-                            (
-                                nodes.ClassDef,
-                                nodes.FunctionDef,
-                                nodes.Lambda,
-                                nodes.Module,
-                                bases.BaseInstance,
-                            ),
-                        ):
-                            inferred_name = inferred.name
-                        else:
-                            inferred_name = inferred.pytype().rsplit(".", 1)[-1]
+                        inferred_name = utils.get_inferred_type_name(inferred)
                         self.add_message(
                             "not-context-manager", node=node, args=(inferred_name,)
                         )
