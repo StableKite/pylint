@@ -75,6 +75,65 @@ TYPE_ANNOTATION_NODES_TYPES = (
     nodes.Arguments,
     nodes.FunctionDef,
 )
+
+
+def _is_raising_call(
+    node: nodes.Call,
+    seen: frozenset[nodes.FunctionDef | nodes.Lambda] = frozenset(),
+) -> bool:
+    """Prove a synchronous call exits by raising, rather than returning None.
+
+    Inference gives an implicit None to wrappers ending in a raising helper.
+    Inspect actual bodies, not their result annotations. A real return, a
+    suppressing context, or an async/generator call must retain its value.
+    """
+    function = safe_infer(node.func)
+    while isinstance(function, (bases.BoundMethod, bases.UnboundMethod)):
+        function = function._proxied
+    if not isinstance(function, (nodes.FunctionDef, nodes.Lambda)) or function in seen:
+        return False
+    if isinstance(function, nodes.AsyncFunctionDef):
+        return False
+    if any(
+        value.scope() is function
+        for value in function.nodes_of_class((nodes.Yield, nodes.YieldFrom))
+    ):
+        return False
+    seen = seen | {function}
+    if not isinstance(function, nodes.FunctionDef):
+        return isinstance(function.body, nodes.Call) and _is_raising_call(
+            function.body, seen
+        )
+    # A return in a nested function or method belongs to that other scope.
+    for value in function.nodes_of_class(nodes.Return):
+        if value.scope() is function and not (
+            isinstance(value.value, nodes.Call) and _is_raising_call(value.value, seen)
+        ):
+            return False
+    return bool(function.body) and _statement_raises(function.body[-1], seen)
+
+
+def _statement_raises(
+    statement: nodes.NodeNG, seen: frozenset[nodes.FunctionDef | nodes.Lambda]
+) -> bool:
+    """Require every path through a final statement to raise."""
+    if isinstance(statement, nodes.Raise):
+        return True
+    if isinstance(statement, (nodes.Expr, nodes.Return)):
+        return isinstance(statement.value, nodes.Call) and _is_raising_call(
+            statement.value, seen
+        )
+    if isinstance(statement, nodes.If):
+        return (
+            bool(statement.body)
+            and bool(statement.orelse)
+            and _statement_raises(statement.body[-1], seen)
+            and _statement_raises(statement.orelse[-1], seen)
+        )
+    # try/with may catch or suppress an otherwise nonreturning call.
+    return False
+
+
 BUILTINS_IMPLICIT_RETURN_NONE = {
     "builtins.dict": {"clear", "update"},
     "builtins.list": {
@@ -2488,6 +2547,12 @@ class IterableChecker(BaseChecker):
             return
         inferred = safe_infer(node)
         if not inferred or is_comprehension(inferred):
+            return
+        if (
+            is_none(inferred)
+            and isinstance(node, nodes.Call)
+            and _is_raising_call(node)
+        ):
             return
         if not is_iterable(inferred, check_async=check_async):
             self.add_message("not-an-iterable", args=node.as_string(), node=node)
