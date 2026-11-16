@@ -24,6 +24,12 @@ import astroid.helpers
 import astroid.interpreter
 import astroid.modutils
 from astroid import arguments, bases, nodes, objects, util
+from astroid.context import (
+    CallContext,
+    InferenceContext,
+    bind_context_to_node,
+    copy_context,
+)
 from astroid.exceptions import InferenceError
 from astroid.nodes import _base_nodes
 from astroid.typing import InferenceResult, SuccessfulInferenceResult
@@ -80,6 +86,7 @@ TYPE_ANNOTATION_NODES_TYPES = (
 def _is_raising_call(
     node: nodes.Call,
     seen: frozenset[nodes.FunctionDef | nodes.Lambda] = frozenset(),
+    context: InferenceContext | None = None,
 ) -> bool:
     """Prove a synchronous call exits by raising, rather than returning None.
 
@@ -87,8 +94,16 @@ def _is_raising_call(
     Inspect actual bodies, not their result annotations. A real return, a
     suppressing context, or an async/generator call must retain its value.
     """
-    function = safe_infer(node.func)
+    function = safe_infer(node.func, context=context)
+    call_context = copy_context(context)
+    call_context.boundnode = None
+    call_context.callcontext = CallContext(node.args, node.keywords, callee=function)
+    if context is not None:
+        call_context.extra_context = node._populate_context_lookup(context.clone())
     while isinstance(function, (bases.BoundMethod, bases.UnboundMethod)):
+        if isinstance(function, bases.BoundMethod):
+            bound_node = function.original_caller or function.bound
+            call_context = bind_context_to_node(call_context, bound_node)
         function = function._proxied
     if not isinstance(function, (nodes.FunctionDef, nodes.Lambda)) or function in seen:
         return False
@@ -102,33 +117,38 @@ def _is_raising_call(
     seen = seen | {function}
     if not isinstance(function, nodes.FunctionDef):
         return isinstance(function.body, nodes.Call) and _is_raising_call(
-            function.body, seen
+            function.body, seen, call_context
         )
     # A return in a nested function or method belongs to that other scope.
     for value in function.nodes_of_class(nodes.Return):
         if value.scope() is function and not (
-            isinstance(value.value, nodes.Call) and _is_raising_call(value.value, seen)
+            isinstance(value.value, nodes.Call)
+            and _is_raising_call(value.value, seen, call_context)
         ):
             return False
-    return bool(function.body) and _statement_raises(function.body[-1], seen)
+    return bool(function.body) and _statement_raises(
+        function.body[-1], seen, call_context
+    )
 
 
 def _statement_raises(
-    statement: nodes.NodeNG, seen: frozenset[nodes.FunctionDef | nodes.Lambda]
+    statement: nodes.NodeNG,
+    seen: frozenset[nodes.FunctionDef | nodes.Lambda],
+    context: InferenceContext,
 ) -> bool:
     """Require every path through a final statement to raise."""
     if isinstance(statement, nodes.Raise):
         return True
     if isinstance(statement, (nodes.Expr, nodes.Return)):
         return isinstance(statement.value, nodes.Call) and _is_raising_call(
-            statement.value, seen
+            statement.value, seen, context
         )
     if isinstance(statement, nodes.If):
         return (
             bool(statement.body)
             and bool(statement.orelse)
-            and _statement_raises(statement.body[-1], seen)
-            and _statement_raises(statement.orelse[-1], seen)
+            and _statement_raises(statement.body[-1], seen, context)
+            and _statement_raises(statement.orelse[-1], seen, context)
         )
     # try/with may catch or suppress an exception raised by the call.
     return False
